@@ -6,4 +6,3 @@ pandas
 numpy
 requests
 pytz
-upstox-client
