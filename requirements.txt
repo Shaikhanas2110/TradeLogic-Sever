@@ -1,0 +1,9 @@
+flask
+flask-cors
+gunicorn
+upstox-python-sdk
+pandas
+numpy
+requests
+pytz
+upstox-client

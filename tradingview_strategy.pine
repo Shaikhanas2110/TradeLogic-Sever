@@ -1,0 +1,431 @@
+//@version=6
+strategy("RSI Fibonacci with Webhook", 
+     overlay=false, 
+     initial_capital=100000,
+     default_qty_type=strategy.percent_of_equity, 
+     default_qty_value=30,
+     commission_type=strategy.commission.percent,
+     commission_value=0.05,
+     slippage=2,
+     pyramiding=0,
+     calc_on_every_tick=false)
+
+// =============================================================================
+// INPUTS
+// =============================================================================
+
+// RSI Settings
+rsiLength = input.int(14, "RSI Length", minval=5, maxval=30, group="RSI")
+rsiOverbought = input.int(70, "Overbought", minval=60, maxval=85, group="RSI")
+rsiOversold = input.int(30, "Oversold", minval=15, maxval=40, group="RSI")
+
+// Trend Filter
+emaFastLen = input.int(20, "Fast EMA", minval=5, maxval=50, group="Trend")
+emaSlowLen = input.int(50, "Slow EMA", minval=20, maxval=200, group="Trend")
+useTrendFilter = input.bool(true, "Use Trend Filter", group="Trend")
+
+// Risk Management
+stopLossPct = input.float(2.5, "Stop Loss %", minval=0.5, maxval=5.0, step=0.5, group="Risk")
+takeProfitPct = input.float(6.0, "Take Profit %", minval=2.0, maxval=15.0, step=0.5, group="Risk")
+trailPct = input.float(1.5, "Trailing Stop %", minval=0.5, maxval=5.0, step=0.5, group="Risk")
+useTrailingStop = input.bool(true, "Use Trailing Stop", group="Risk")
+useBreakeven = input.bool(true, "Use Break-Even Stop", group="Risk")
+breakevenPct = input.float(2.0, "Break-Even Trigger %", minval=1.0, maxval=5.0, group="Risk")
+
+// Session Filter
+useSessionFilter = input.bool(true, "Use Session Filter", group="Time")
+sessionStart = input.int(8, "Session Start Hour", minval=0, maxval=23, group="Time")
+sessionEnd = input.int(22, "Session End Hour", minval=0, maxval=23, group="Time")
+
+// Trade Direction
+tradeType = input.string("Both", "Direction", options=["Long Only", "Short Only", "Both"], group="Strategy")
+
+// Entry Sensitivity
+entrySensitivity = input.string("Medium", "Entry Sensitivity", options=["Low", "Medium", "High"], group="Strategy")
+
+// =============================================================================
+// CALCULATIONS
+// =============================================================================
+
+// Session Filter
+currentHour = hour(time)
+inSession = useSessionFilter ? (currentHour >= sessionStart and currentHour <= sessionEnd) : true
+
+// RSI
+rsi = ta.rsi(close, rsiLength)
+
+// Trend EMAs
+emaFast = ta.ema(close, emaFastLen)
+emaSlow = ta.ema(close, emaSlowLen)
+
+// Trend Detection
+uptrend = useTrendFilter ? (emaFast > emaSlow) : true
+downtrend = useTrendFilter ? (emaFast < emaSlow) : true
+strongUptrend = emaFast > emaSlow and close > emaFast
+strongDowntrend = emaFast < emaSlow and close < emaFast
+
+// RSI Momentum
+rsiRising = rsi > rsi[1]
+rsiFalling = rsi < rsi[1]
+rsiStrongRising = rsi > rsi[1] and rsi > rsi[2]
+rsiStrongFalling = rsi < rsi[1] and rsi < rsi[2]
+
+// Volume Confirmation
+volSMA = ta.sma(volume, 20)
+goodVolume = volume > volSMA * 0.7
+
+// ATR for Volatility
+atr = ta.atr(14)
+atrSMA = ta.sma(atr, 20)
+goodVolatility = atr > atrSMA * 0.3
+
+// =============================================================================
+// ENTRY CONDITIONS
+// =============================================================================
+
+bool longBase = false
+bool shortBase = false
+bool longPullback = false
+bool shortPullback = false
+
+if entrySensitivity == "Low"
+    longBase := ta.crossover(rsi, rsiOversold) and uptrend
+    shortBase := ta.crossunder(rsi, rsiOverbought) and downtrend
+    longPullback := rsi < 45 and rsi > rsi[1] and uptrend and close > emaSlow
+    shortPullback := rsi > 55 and rsi < rsi[1] and downtrend and close < emaSlow
+
+else if entrySensitivity == "Medium"
+    longBase := ta.crossover(rsi, rsiOversold) and strongUptrend and rsiRising
+    shortBase := ta.crossunder(rsi, rsiOverbought) and strongDowntrend and rsiFalling
+    longPullback := rsi < 40 and rsiStrongRising and strongUptrend and goodVolume
+    shortPullback := rsi > 60 and rsiStrongFalling and strongDowntrend and goodVolume
+
+else // High
+    longBase := ta.crossover(rsi, rsiOversold) and strongUptrend and rsiStrongRising and goodVolume and goodVolatility
+    shortBase := ta.crossunder(rsi, rsiOverbought) and strongDowntrend and rsiStrongFalling and goodVolume and goodVolatility
+    longPullback := rsi < 35 and rsiStrongRising and strongUptrend and goodVolume and close <= emaFast * 1.01
+    shortPullback := rsi > 65 and rsiStrongFalling and strongDowntrend and goodVolume and close >= emaFast * 0.99
+
+// Additional Entry
+rsiExtremeLong = rsi < 20 and rsi > rsi[1] and uptrend
+rsiExtremeShort = rsi > 80 and rsi < rsi[1] and downtrend
+
+// EMA Crossover Entry
+emaCrossLong = ta.crossover(emaFast, emaSlow) and rsi > 40 and rsi < 60
+emaCrossShort = ta.crossunder(emaFast, emaSlow) and rsi > 40 and rsi < 60
+
+// Combined Conditions
+goLong = (longBase or longPullback or rsiExtremeLong or emaCrossLong) and 
+         inSession and 
+         (tradeType == "Long Only" or tradeType == "Both")
+
+goShort = (shortBase or shortPullback or rsiExtremeShort or emaCrossShort) and 
+          inSession and 
+          (tradeType == "Short Only" or tradeType == "Both")
+
+// =============================================================================
+// TRADING LOGIC
+// =============================================================================
+
+var float entryPrice = na
+var float longSL = na
+var float longTP = na
+var float shortSL = na
+var float shortTP = na
+var bool beTriggered = false
+
+// LONG ENTRY
+if goLong and strategy.position_size == 0
+    entryPrice := close
+    longSL := close * (1 - stopLossPct/100)
+    longTP := close * (1 + takeProfitPct/100)
+    beTriggered := false
+    
+    strategy.entry("Long", strategy.long)
+    
+    // ⭐ SEND WEBHOOK
+    send_webhook({
+        "symbol": syminfo.ticker,
+        "exchange": syminfo.prefix,
+        "signal": "BUY",
+        "entry_price": close,
+        "stop_loss": longSL,
+        "take_profit": longTP,
+        "rsi": rsi,
+        "ema20": emaFast,
+        "ema50": emaSlow,
+        "confidence": 75,
+        "timestamp": time,
+        "strategy": "RSI Fibonacci",
+        "sensitivity": entrySensitivity
+    })
+
+// SHORT ENTRY
+if goShort and strategy.position_size == 0
+    entryPrice := close
+    shortSL := close * (1 + stopLossPct/100)
+    shortTP := close * (1 - takeProfitPct/100)
+    beTriggered := false
+    
+    strategy.entry("Short", strategy.short)
+    
+    // ⭐ SEND WEBHOOK
+    send_webhook({
+        "symbol": syminfo.ticker,
+        "exchange": syminfo.prefix,
+        "signal": "SELL",
+        "entry_price": close,
+        "stop_loss": shortSL,
+        "take_profit": shortTP,
+        "rsi": rsi,
+        "ema20": emaFast,
+        "ema50": emaSlow,
+        "confidence": 75,
+        "timestamp": time,
+        "strategy": "RSI Fibonacci",
+        "sensitivity": entrySensitivity
+    })
+
+// =============================================================================
+// EXIT LOGIC
+// =============================================================================
+
+// BREAK-EVEN STOP
+if useBreakeven and not beTriggered
+    if strategy.position_size > 0 and close > entryPrice * (1 + breakevenPct/100)
+        beTriggered := true
+        newStop = entryPrice * 1.001
+        strategy.exit("Exit Long", "Long", stop=newStop, limit=longTP)
+        
+        // ⭐ SEND WEBHOOK
+        send_webhook({
+            "symbol": syminfo.ticker,
+            "signal": "BREAKEVEN",
+            "new_stop": newStop,
+            "timestamp": time
+        })
+    
+    if strategy.position_size < 0 and close < entryPrice * (1 - breakevenPct/100)
+        beTriggered := true
+        newStop = entryPrice * 0.999
+        strategy.exit("Exit Short", "Short", stop=newStop, limit=shortTP)
+        
+        // ⭐ SEND WEBHOOK
+        send_webhook({
+            "symbol": syminfo.ticker,
+            "signal": "BREAKEVEN",
+            "new_stop": newStop,
+            "timestamp": time
+        })
+
+// SMART EXIT
+longSmartExit = strategy.position_size > 0 and (
+     rsi > 75 or
+     ta.crossunder(emaFast, emaSlow) or
+     (rsi < 40 and rsi < rsi[1] and rsi[1] < rsi[2])
+)
+
+shortSmartExit = strategy.position_size < 0 and (
+     rsi < 25 or
+     ta.crossover(emaFast, emaSlow) or
+     (rsi > 60 and rsi > rsi[1] and rsi[1] > rsi[2])
+)
+
+if longSmartExit
+    strategy.close("Long", comment="Smart Exit")
+    
+    // ⭐ SEND WEBHOOK
+    send_webhook({
+        "symbol": syminfo.ticker,
+        "signal": "EXIT_LONG",
+        "exit_reason": "Smart Exit",
+        "timestamp": time
+    })
+
+if shortSmartExit
+    strategy.close("Short", comment="Smart Exit")
+    
+    // ⭐ SEND WEBHOOK
+    send_webhook({
+        "symbol": syminfo.ticker,
+        "signal": "EXIT_SHORT",
+        "exit_reason": "Smart Exit",
+        "timestamp": time
+    })
+
+// SESSION END EXIT
+if useSessionFilter and not inSession
+    if strategy.position_size > 0
+        strategy.close("Long", comment="Session End")
+        
+        // ⭐ SEND WEBHOOK
+        send_webhook({
+            "symbol": syminfo.ticker,
+            "signal": "EXIT_LONG",
+            "exit_reason": "Session End",
+            "timestamp": time
+        })
+    
+    if strategy.position_size < 0
+        strategy.close("Short", comment="Session End")
+        
+        // ⭐ SEND WEBHOOK
+        send_webhook({
+            "symbol": syminfo.ticker,
+            "signal": "EXIT_SHORT",
+            "exit_reason": "Session End",
+            "timestamp": time
+        })
+
+// =============================================================================
+// VISUALIZATION
+// =============================================================================
+
+// RSI Plot
+rsiColor = rsi > 70 ? color.red : rsi < 30 ? color.green : color.blue
+plot(rsi, "RSI", color=rsiColor, linewidth=2)
+
+// Levels
+hline(rsiOverbought, "OB", color=color.red, linestyle=hline.style_dashed)
+hline(50, "Mid", color=color.gray, linestyle=hline.style_dotted)
+hline(rsiOversold, "OS", color=color.green, linestyle=hline.style_dashed)
+hline(80, "Extreme OB", color=color.new(color.red, 60), linestyle=hline.style_dotted)
+hline(20, "Extreme OS", color=color.new(color.green, 60), linestyle=hline.style_dotted)
+
+// Signals
+plotshape(goLong, "BUY", shape.triangleup, location.bottom, color.green, size=size.normal)
+plotshape(goShort, "SELL", shape.triangledown, location.top, color.red, size=size.normal)
+
+// Background
+bgcolor(strategy.position_size > 0 ? color.new(color.green, 90) : na)
+bgcolor(strategy.position_size < 0 ? color.new(color.red, 90) : na)
+
+// Session Background
+bgcolor(not inSession and useSessionFilter ? color.new(color.gray, 95) : na)
+
+// Trend Background
+bgcolor(strongUptrend ? color.new(color.lime, 95) : strongDowntrend ? color.new(color.maroon, 95) : na)
+
+// =============================================================================
+// PERFORMANCE TABLE
+// =============================================================================
+
+var table perfTable = table.new(position.bottom_right, 2, 12, 
+     border_width=1, border_color=color.blue, frame_width=2, frame_color=color.blue)
+
+if barstate.islast
+    totalTrades = strategy.closedtrades
+    winTrades = strategy.wintrades
+    lossTrades = strategy.losstrades
+    winRate = totalTrades > 0 ? (winTrades / totalTrades) * 100 : 0
+    profitFactor = strategy.grossloss != 0 ? math.abs(strategy.grossprofit / strategy.grossloss) : 0
+    netProfit = strategy.netprofit
+    netProfitPct = (netProfit / strategy.initial_capital) * 100
+    maxDD = strategy.max_drawdown
+    maxDDPct = (maxDD / strategy.initial_capital) * 100
+    avgWin = winTrades > 0 ? strategy.grossprofit / winTrades : 0
+    avgLoss = lossTrades > 0 ? math.abs(strategy.grossloss / lossTrades) : 0
+    expectancy = totalTrades > 0 ? netProfit / totalTrades : 0
+    rewardRisk = avgLoss != 0 ? avgWin / avgLoss : 0
+    
+    grossProfit = strategy.grossprofit
+    grossLoss = math.abs(strategy.grossloss)
+    
+    // Header
+    table.cell(perfTable, 0, 0, "📊 PERFORMANCE", bgcolor=color.new(color.blue, 30), text_color=color.white, text_size=size.small)
+    table.cell(perfTable, 1, 0, "VALUES", bgcolor=color.new(color.blue, 30), text_color=color.white, text_size=size.small)
+    
+    // Net Profit %
+    table.cell(perfTable, 0, 1, "Net Profit %", text_size=size.tiny, text_color=color.white)
+    table.cell(perfTable, 1, 1, str.tostring(netProfitPct, "#.##") + "%", 
+         bgcolor=netProfitPct > 0 ? color.new(color.green, 60) : color.new(color.red, 60), text_color=color.white, text_size=size.tiny)
+    
+    // Net Profit $
+    table.cell(perfTable, 0, 2, "Net Profit $", text_size=size.tiny, text_color=color.white)
+    table.cell(perfTable, 1, 2, "$" + str.tostring(netProfit, "#.##"), 
+         bgcolor=netProfit > 0 ? color.new(color.green, 60) : color.new(color.red, 60), text_color=color.white, text_size=size.tiny)
+    
+    // Win Rate
+    table.cell(perfTable, 0, 3, "Win Rate", text_size=size.tiny, text_color=color.white)
+    table.cell(perfTable, 1, 3, str.tostring(winRate, "#.#") + "%", 
+         bgcolor=winRate >= 55 ? color.new(color.green, 60) : winRate >= 45 ? color.new(color.yellow, 60) : color.new(color.red, 60), text_color=color.white, text_size=size.tiny)
+    
+    // Profit Factor
+    table.cell(perfTable, 0, 4, "Profit Factor", text_size=size.tiny, text_color=color.white)
+    table.cell(perfTable, 1, 4, str.tostring(profitFactor, "#.##"), 
+         bgcolor=profitFactor >= 1.5 ? color.new(color.green, 60) : profitFactor >= 1.0 ? color.new(color.yellow, 60) : color.new(color.red, 60), text_color=color.white, text_size=size.tiny)
+    
+    // Max DD %
+    table.cell(perfTable, 0, 5, "Max DD %", text_size=size.tiny, text_color=color.white)
+    table.cell(perfTable, 1, 5, str.tostring(maxDDPct, "#.##") + "%", 
+         bgcolor=maxDDPct < 10 ? color.new(color.green, 60) : maxDDPct < 20 ? color.new(color.yellow, 60) : color.new(color.red, 60), text_color=color.white, text_size=size.tiny)
+    
+    // Total Trades
+    table.cell(perfTable, 0, 6, "Total Trades", text_size=size.tiny, text_color=color.white)
+    table.cell(perfTable, 1, 6, str.tostring(totalTrades), 
+         bgcolor=color.new(color.gray, 60), text_color=color.white, text_size=size.tiny)
+    
+    // Wins / Losses
+    table.cell(perfTable, 0, 7, "Wins / Losses", text_size=size.tiny, text_color=color.white)
+    table.cell(perfTable, 1, 7, str.tostring(winTrades) + " / " + str.tostring(lossTrades), 
+         bgcolor=winTrades > lossTrades ? color.new(color.green, 70) : color.new(color.red, 70), text_color=color.white, text_size=size.tiny)
+    
+    // Avg Win/Loss
+    table.cell(perfTable, 0, 8, "Avg Win / Loss", text_size=size.tiny, text_color=color.white)
+    table.cell(perfTable, 1, 8, "$" + str.tostring(avgWin, "#.#") + " / $" + str.tostring(avgLoss, "#.#"), 
+         bgcolor=color.new(color.gray, 60), text_color=color.white, text_size=size.tiny)
+    
+    // Reward:Risk
+    table.cell(perfTable, 0, 9, "Reward:Risk", text_size=size.tiny, text_color=color.white)
+    table.cell(perfTable, 1, 9, str.tostring(rewardRisk, "#.##") + ":1", 
+         bgcolor=rewardRisk >= 1.5 ? color.new(color.green, 60) : color.new(color.yellow, 60), text_color=color.white, text_size=size.tiny)
+    
+    // Expectancy
+    table.cell(perfTable, 0, 10, "Expectancy/Trade", text_size=size.tiny, text_color=color.white)
+    table.cell(perfTable, 1, 10, "$" + str.tostring(expectancy, "#.##"), 
+         bgcolor=expectancy > 0 ? color.new(color.green, 60) : color.new(color.red, 60), text_color=color.white, text_size=size.tiny)
+    
+    // Gross Profit/Loss
+    table.cell(perfTable, 0, 11, "Gross P / L", text_size=size.tiny, text_color=color.white)
+    table.cell(perfTable, 1, 11, "$" + str.tostring(grossProfit, "#") + " / $" + str.tostring(grossLoss, "#"), 
+         bgcolor=color.new(color.gray, 60), text_color=color.white, text_size=size.tiny)
+
+// =============================================================================
+// STATUS TABLE
+// =============================================================================
+
+var table statusTable = table.new(position.top_right, 2, 6, 
+     border_width=1, border_color=color.purple, frame_width=1, frame_color=color.purple)
+
+if barstate.islast
+    table.cell(statusTable, 0, 0, "🔍 STATUS", bgcolor=color.new(color.purple, 40), text_color=color.white, text_size=size.tiny)
+    table.cell(statusTable, 1, 0, "VALUE", bgcolor=color.new(color.purple, 40), text_color=color.white, text_size=size.tiny)
+    
+    // Trend
+    table.cell(statusTable, 0, 1, "Trend", text_size=size.tiny, text_color=color.white)
+    trendTxt = strongUptrend ? "STRONG UP ✓" : strongDowntrend ? "STRONG DOWN ✓" : uptrend ? "UP" : downtrend ? "DOWN" : "NEUTRAL"
+    trendCol = strongUptrend ? color.new(color.green, 60) : strongDowntrend ? color.new(color.red, 60) : color.new(color.gray, 60)
+    table.cell(statusTable, 1, 1, trendTxt, bgcolor=trendCol, text_color=color.white, text_size=size.tiny)
+    
+    // RSI
+    table.cell(statusTable, 0, 2, "RSI", text_size=size.tiny, text_color=color.white)
+    rsiTxt = rsi > 70 ? "OB " + str.tostring(rsi, "#.#") : rsi < 30 ? "OS " + str.tostring(rsi, "#.#") : str.tostring(rsi, "#.#")
+    rsiCol = rsi > 70 ? color.new(color.red, 60) : rsi < 30 ? color.new(color.green, 60) : color.new(color.gray, 60)
+    table.cell(statusTable, 1, 2, rsiTxt, bgcolor=rsiCol, text_color=color.white, text_size=size.tiny)
+    
+    // Session
+    table.cell(statusTable, 0, 3, "Session", text_size=size.tiny, text_color=color.white)
+    table.cell(statusTable, 1, 3, inSession ? "ACTIVE ✓" : "CLOSED ✗", 
+         bgcolor=inSession ? color.new(color.green, 60) : color.new(color.gray, 60), text_color=color.white, text_size=size.tiny)
+    
+    // Position
+    table.cell(statusTable, 0, 4, "Position", text_size=size.tiny, text_color=color.white)
+    posTxt = strategy.position_size > 0 ? "LONG" : strategy.position_size < 0 ? "SHORT" : "FLAT"
+    posCol = strategy.position_size > 0 ? color.new(color.green, 60) : strategy.position_size < 0 ? color.new(color.red, 60) : color.new(color.gray, 60)
+    table.cell(statusTable, 1, 4, posTxt, bgcolor=posCol, text_color=color.white, text_size=size.tiny)
+    
+    // Signal
+    table.cell(statusTable, 0, 5, "Signal", text_size=size.tiny, text_color=color.white)
+    sigTxt = goLong ? "BUY ✓" : goShort ? "SELL ✓" : "WAIT"
+    sigCol = goLong ? color.new(color.green, 60) : goShort ? color.new(color.red, 60) : color.new(color.gray, 60)
+    table.cell(statusTable, 1, 5, sigTxt, bgcolor=sigCol, text_color=color.white, text_size=size.tiny)
