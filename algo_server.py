@@ -816,7 +816,6 @@ def ltp_route(symbol):
     except Exception as e:
         return jsonify({"error": str(e), "ltp": 0.0, "prev_close": 0.0}), 500
 
-
 @app.route("/portfolio", methods=["GET"])
 def get_portfolio():
 

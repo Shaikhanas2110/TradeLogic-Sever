@@ -319,7 +319,6 @@ def manualLTP(symbol):
         instrument_key = token2.values[0]
         ex = ex2.values[0]
 
-    # 🚨 CRITICAL SAFETY CHECK
     if instrument_key is None or ex is None:
         print(f"[ERROR] Instrument not found in master for symbol: {symbol}")
         return None
