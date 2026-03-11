@@ -624,7 +624,7 @@ def get_ltp_price(symbol):
             return helper.newgetQuotes("Nifty 50")
         if symbol == "BANKNIFTY":
             return helper.newgetQuotes("Nifty Bank")
-        return helper.newmanualLTP(symbol)
+        return helper.manualLTP1(symbol)
     except Exception as e:
         print("[LTP ERROR]", symbol, e)
         return None, None

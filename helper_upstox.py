@@ -336,7 +336,63 @@ def manualLTP(symbol):
         return None
 
 
-def newmanualLTP(symbol):
+# def newmanualLTP(symbol):
+#     configuration = upstox_client.Configuration()
+#     configuration.access_token = access_token
+#     api_version = "2.0"
+
+#     # Look up instrument_key and exchange from df2
+#     token = df2[df2["tradingsymbol"] == symbol]["instrument_key"]
+#     token2 = df2[df2["name"] == symbol]["instrument_key"]
+#     ex1 = df2[df2["tradingsymbol"] == symbol]["exchange"]
+#     ex2 = df2[df2["name"] == symbol]["exchange"]
+
+#     instrument_key = None
+#     ex = None
+
+#     if not token.empty:
+#         instrument_key = token.values[0]
+#         ex = ex1.values[0]
+#     elif not token2.empty:
+#         instrument_key = token2.values[0]
+#         ex = ex2.values[0]
+
+#     if instrument_key is None or ex is None:
+#         print(f"[ERROR] Instrument not found in master for symbol: {symbol}")
+#         return None, None
+
+#     try:
+#         # Use full quotes endpoint to get both ltp and prev_close (ohlc.close)
+#         url = f"https://api.upstox.com/v2/market-quote/quotes?instrument_key={instrument_key}"
+#         headers = {
+#             "Accept": "application/json",
+#             "Authorization": "Bearer " + access_token,
+#         }
+#         response = requests.get(url, headers=headers)
+#         data = response.json()
+
+#         # Upstox key format is "EX:SYMBOL" e.g. "NSE_EQ:RELIANCE"
+#         symb = f"{ex}:{symbol}"
+#         entry = data["data"].get(symb)
+
+#         if entry is None:
+#             # fallback: just grab first item if key format differs
+#             entry = next(iter(data["data"].values()), None)
+
+#         if entry is None:
+#             print(f"[ERROR] No data returned from Upstox for {symbol}")
+#             return None, None
+
+#         ltp = float(entry["last_price"])
+#         prev_close = float(entry.get("ohlc", {}).get("close", ltp))
+#         return ltp, prev_close
+
+#     except Exception as e:
+#         print(f"[ERROR] manualLTP API call failed for {symbol}: {e}")
+#         return None, None
+
+
+def manualLTP1(symbol):
     configuration = upstox_client.Configuration()
     configuration.access_token = access_token
     api_version = "2.0"
@@ -361,35 +417,31 @@ def newmanualLTP(symbol):
         print(f"[ERROR] Instrument not found in master for symbol: {symbol}")
         return None, None
 
+    headers = {
+        "Accept": "application/json",
+        "Authorization": "Bearer " + access_token,
+    }
     try:
-        # Use full quotes endpoint to get both ltp and prev_close (ohlc.close)
         url = f"https://api.upstox.com/v2/market-quote/quotes?instrument_key={instrument_key}"
-        headers = {
-            "Accept": "application/json",
-            "Authorization": "Bearer " + access_token,
-        }
         response = requests.get(url, headers=headers)
         data = response.json()
 
-        # Upstox key format is "EX:SYMBOL" e.g. "NSE_EQ:RELIANCE"
-        symb = f"{ex}:{symbol}"
-        entry = data["data"].get(symb)
+        if data.get("status") == "success" and data.get("data"):
+            symb = f"{ex}:{symbol}"
+            entry = data["data"].get(symb)
 
-        if entry is None:
-            # fallback: just grab first item if key format differs
-            entry = next(iter(data["data"].values()), None)
+            # Fallback: grab first item if key format differs slightly
+            if entry is None:
+                entry = next(iter(data["data"].values()), None)
 
-        if entry is None:
-            print(f"[ERROR] No data returned from Upstox for {symbol}")
-            return None, None
-
-        ltp = float(entry["last_price"])
-        prev_close = float(entry.get("ohlc", {}).get("close", ltp))
-        return ltp, prev_close
+            if entry and float(entry.get("last_price", 0)) > 0:
+                ltp = float(entry["last_price"])
+                prev_close = float(entry.get("ohlc", {}).get("close", ltp))
+                print(f"[LTP] {symbol} via quotes: {ltp}, prev_close: {prev_close}")
+                return ltp, prev_close
 
     except Exception as e:
-        print(f"[ERROR] manualLTP API call failed for {symbol}: {e}")
-        return None, None
+        print(f"[WARN] quotes endpoint failed for {symbol}: {e}")
 
 
 # def manualLTP(symbol):
