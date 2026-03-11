@@ -14,7 +14,7 @@ import os
 import sys
 import pytz
 import time
-from datetime import datetime, date, timedelta, time as dt_time
+from datetime import datetime, date, timedelta, time as dt_time, timezone
 from typing import Dict, List, Tuple, Optional
 from datetime import datetime, timedelta, time
 import time as time_module
@@ -95,19 +95,20 @@ def fetch_raw_candles(instrument_key):
 #         raise Exception("Access token is empty.")
 #     return token
 
+
 def get_upstox_token():
     # 1. Try environment variable first (Railway)
     token = os.environ.get("UPSTOX_ACCESS_TOKEN", "").strip()
     if token:
         return token
-    
+
     # 2. Fallback to file (local dev)
     if os.path.exists(TOKEN_FILE):
         with open(TOKEN_FILE, "r") as f:
             token = f.read().strip()
         if token:
             return token
-    
+
     raise Exception("No access token found. Set UPSTOX_ACCESS_TOKEN env variable.")
 
 
@@ -687,6 +688,79 @@ algo_threads = {}
 # ==========================================
 #  ROUTES & ENDPOINTS
 # ==========================================
+# @app.route("/minute_data/<instrument_key>")
+# def get_minute_data(instrument_key):
+
+#     access_token = get_upstox_token()
+
+#     headers = {
+#         "Authorization": f"Bearer {access_token}",
+#         "Accept": "application/json",
+#     }
+
+#     now = datetime.now()
+
+#     market_open_time = time(9, 15)
+#     market_close_time = time(15, 30)
+
+#     today = now.date()
+#     # 🔹 Decide which endpoint to use
+#     if market_open_time <= now.time() <= market_close_time and today.weekday() < 5:
+#         # MARKET RUNNING → USE INTRADAY
+#         url = f"https://api.upstox.com/v2/historical-candle/intraday/{instrument_key}/1minute"
+#     else:
+#         # MARKET CLOSED OR WEEKEND → USE HISTORICAL
+
+#         # Find last trading day
+#         chart_date = today
+
+#         if today.weekday() == 5:  # Saturday
+#             chart_date = today - timedelta(days=1)
+#         elif today.weekday() == 6:  # Sunday
+#             chart_date = today - timedelta(days=2)
+
+#         # If before market open → use previous day
+#         elif now.time() < market_open_time:
+#             chart_date = today - timedelta(days=1)
+
+#         # 🔁 Holiday fallback loop
+#         while True:
+#             date_str = chart_date.strftime("%Y-%m-%d")
+
+#             url = f"https://api.upstox.com/v2/historical-candle/{instrument_key}/1minute/{date_str}/{date_str}"
+
+#             response = requests.get(url, headers=headers)
+
+#             if response.status_code != 200:
+#                 return jsonify({"error": response.text}), 500
+
+#             data = response.json()
+#             raw_candles = data.get("data", {}).get("candles", [])
+
+#             if raw_candles:
+#                 break
+
+#             chart_date = chart_date - timedelta(days=1)
+
+#         # Process historical candles
+
+#         return process_candles(raw_candles)
+
+#     # 🔥 If intraday endpoint used
+#     response = requests.get(url, headers=headers)
+
+#     if response.status_code != 200:
+#         return jsonify({"error": response.text}), 500
+
+#     data = response.json()
+#     raw_candles = data.get("data", {}).get("candles", [])
+
+#     return process_candles(raw_candles)
+
+
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
 @app.route("/minute_data/<instrument_key>")
 def get_minute_data(instrument_key):
 
@@ -697,39 +771,42 @@ def get_minute_data(instrument_key):
         "Accept": "application/json",
     }
 
-    now = datetime.now()
+    # ── ALWAYS use IST, regardless of server timezone ──────────────────────
+    now = datetime.now(IST)
+    today = now.date()
 
     market_open_time = time(9, 15)
     market_close_time = time(15, 30)
 
-    today = now.date()
-    # 🔹 Decide which endpoint to use
     if market_open_time <= now.time() <= market_close_time and today.weekday() < 5:
         # MARKET RUNNING → USE INTRADAY
         url = f"https://api.upstox.com/v2/historical-candle/intraday/{instrument_key}/1minute"
+
+        response = requests.get(url, headers=headers)
+        if response.status_code != 200:
+            return jsonify({"error": response.text}), 500
+
+        data = response.json()
+        raw_candles = data.get("data", {}).get("candles", [])
+        return process_candles(raw_candles)
+
     else:
         # MARKET CLOSED OR WEEKEND → USE HISTORICAL
-
-        # Find last trading day
         chart_date = today
 
-        if today.weekday() == 5:  # Saturday
+        if today.weekday() == 5:  # Saturday → use Friday
             chart_date = today - timedelta(days=1)
-        elif today.weekday() == 6:  # Sunday
+        elif today.weekday() == 6:  # Sunday → use Friday
             chart_date = today - timedelta(days=2)
-
-        # If before market open → use previous day
-        elif now.time() < market_open_time:
+        elif now.time() < market_open_time:  # Before market open → use previous day
             chart_date = today - timedelta(days=1)
 
-        # 🔁 Holiday fallback loop
+        # Holiday fallback loop — go back until we find a day with data
         while True:
             date_str = chart_date.strftime("%Y-%m-%d")
-
             url = f"https://api.upstox.com/v2/historical-candle/{instrument_key}/1minute/{date_str}/{date_str}"
 
             response = requests.get(url, headers=headers)
-
             if response.status_code != 200:
                 return jsonify({"error": response.text}), 500
 
@@ -741,20 +818,7 @@ def get_minute_data(instrument_key):
 
             chart_date = chart_date - timedelta(days=1)
 
-        # Process historical candles
-
         return process_candles(raw_candles)
-
-    # 🔥 If intraday endpoint used
-    response = requests.get(url, headers=headers)
-
-    if response.status_code != 200:
-        return jsonify({"error": response.text}), 500
-
-    data = response.json()
-    raw_candles = data.get("data", {}).get("candles", [])
-
-    return process_candles(raw_candles)
 
 
 @app.route("/init_account")
@@ -815,6 +879,7 @@ def ltp_route(symbol):
         )
     except Exception as e:
         return jsonify({"error": str(e), "ltp": 0.0, "prev_close": 0.0}), 500
+
 
 @app.route("/portfolio", methods=["GET"])
 def get_portfolio():
@@ -1037,4 +1102,3 @@ def callback():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=4000, debug=False)
-    
