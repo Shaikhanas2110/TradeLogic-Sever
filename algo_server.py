@@ -95,19 +95,20 @@ def fetch_raw_candles(instrument_key):
 #         raise Exception("Access token is empty.")
 #     return token
 
+
 def get_upstox_token():
     # 1. Try environment variable first (Railway)
     token = os.environ.get("UPSTOX_ACCESS_TOKEN", "").strip()
     if token:
         return token
-    
+
     # 2. Fallback to file (local dev)
     if os.path.exists(TOKEN_FILE):
         with open(TOKEN_FILE, "r") as f:
             token = f.read().strip()
         if token:
             return token
-    
+
     raise Exception("No access token found. Set UPSTOX_ACCESS_TOKEN env variable.")
 
 
@@ -689,20 +690,17 @@ algo_threads = {}
 # ==========================================
 @app.route("/minute_data/<instrument_key>")
 def get_minute_data(instrument_key):
-
     access_token = get_upstox_token()
-
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Accept": "application/json",
     }
 
-    now = datetime.now()
-
+    now = datetime.now(IST)  # ← only change
     market_open_time = time(9, 15)
     market_close_time = time(15, 30)
-
     today = now.date()
+
     # 🔹 Decide which endpoint to use
     if market_open_time <= now.time() <= market_close_time and today.weekday() < 5:
         # MARKET RUNNING → USE INTRADAY
@@ -815,6 +813,7 @@ def ltp_route(symbol):
         )
     except Exception as e:
         return jsonify({"error": str(e), "ltp": 0.0, "prev_close": 0.0}), 500
+
 
 @app.route("/portfolio", methods=["GET"])
 def get_portfolio():
@@ -1037,4 +1036,3 @@ def callback():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=4000, debug=False)
-    
