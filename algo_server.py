@@ -761,6 +761,22 @@ algo_threads = {}
 IST = timezone(timedelta(hours=5, minutes=30))
 
 
+@app.route("/debug_time")
+def debug_time():
+    from datetime import datetime, timezone, timedelta
+
+    IST = timezone(timedelta(hours=5, minutes=30))
+    now = datetime.now(IST)
+    return jsonify(
+        {
+            "utc": str(datetime.utcnow()),
+            "ist": str(now),
+            "ist_time": str(now.time()),
+            "weekday": now.weekday(),
+        }
+    )
+
+
 @app.route("/minute_data/<instrument_key>")
 def get_minute_data(instrument_key):
 
