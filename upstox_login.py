@@ -74,7 +74,7 @@ GRANT_TYPE = "authorization_code"
 TOKEN_FILE = "upstox_access_token.txt"
 
 app = Flask(__name__)
-CORS(app)  # allow Flutter dev server / emulator to call
+CORS(app) 
 
 
 def auth_url() -> str:
