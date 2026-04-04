@@ -57,7 +57,7 @@
 # if __name__ == "__main__":
 #     main()
 
-# upstox_service.py
+
 from __future__ import print_function
 import urllib.parse
 import requests
