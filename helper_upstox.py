@@ -392,12 +392,295 @@ def manualLTP(symbol):
 #         return None, None
 
 
-def manualLTP1(symbol):
-    configuration = upstox_client.Configuration()
-    configuration.access_token = access_token
-    api_version = "2.0"
+# def manualLTP1(symbol):
+#     configuration = upstox_client.Configuration()
+#     configuration.access_token = access_token
+#     api_version = "2.0"
 
-    # Look up instrument_key and exchange from df2
+#     # Look up instrument_key and exchange from df2
+#     token = df2[df2["tradingsymbol"] == symbol]["instrument_key"]
+#     token2 = df2[df2["name"] == symbol]["instrument_key"]
+#     ex1 = df2[df2["tradingsymbol"] == symbol]["exchange"]
+#     ex2 = df2[df2["name"] == symbol]["exchange"]
+
+#     instrument_key = None
+#     ex = None
+
+#     if not token.empty:
+#         instrument_key = token.values[0]
+#         ex = ex1.values[0]
+#     elif not token2.empty:
+#         instrument_key = token2.values[0]
+#         ex = ex2.values[0]
+
+#     if instrument_key is None or ex is None:
+#         print(f"[ERROR] Instrument not found in master for symbol: {symbol}")
+#         return None, None
+
+#     headers = {
+#         "Accept": "application/json",
+#         "Authorization": "Bearer " + access_token,
+#     }
+#     try:
+#         url = f"https://api.upstox.com/v2/market-quote/quotes?instrument_key={instrument_key}"
+#         response = requests.get(url, headers=headers)
+#         data = response.json()
+
+#         if data.get("status") == "success" and data.get("data"):
+#             symb = f"{ex}:{symbol}"
+#             entry = data["data"].get(symb)
+
+#             # Fallback: grab first item if key format differs slightly
+#             if entry is None:
+#                 entry = next(iter(data["data"].values()), None)
+
+#             if entry and float(entry.get("last_price", 0)) > 0:
+#                 ltp = float(entry["last_price"])
+#                 prev_close = float(entry.get("ohlc", {}).get("close", ltp))
+#                 print(f"[LTP] {symbol} via quotes: {ltp}, prev_close: {prev_close}")
+#                 return ltp, prev_close
+
+#     except Exception as e:
+#         print(f"[WARN] quotes endpoint failed for {symbol}: {e}")
+
+
+# def manualLTP1(symbol):
+
+#     from datetime import datetime, timedelta, time
+#     import pytz
+#     IST = pytz.timezone("Asia/Kolkata")
+#     now_ist = datetime.now(IST)
+#     today = now_ist.date()
+#     current_time = now_ist.time()
+
+#     market_open = time(9, 15)
+#     market_close = time(15, 30)
+#     is_weekday = today.weekday() < 5  # Mon=0 … Fri=4
+#     is_market_hours = market_open <= current_time <= market_close
+
+#     # Look up instrument_key and exchange from df2
+#     token = df2[df2["tradingsymbol"] == symbol]["instrument_key"]
+#     token2 = df2[df2["name"] == symbol]["instrument_key"]
+#     ex1 = df2[df2["tradingsymbol"] == symbol]["exchange"]
+#     ex2 = df2[df2["name"] == symbol]["exchange"]
+
+#     instrument_key = None
+#     ex = None
+
+#     if not token.empty:
+#         instrument_key = token.values[0]
+#         ex = ex1.values[0]
+#     elif not token2.empty:
+#         instrument_key = token2.values[0]
+#         ex = ex2.values[0]
+
+#     if instrument_key is None or ex is None:
+#         print(f"[ERROR] Instrument not found in master for symbol: {symbol}")
+#         return None, None
+
+#     headers = {
+#         "Accept": "application/json",
+#         "Authorization": "Bearer " + access_token,
+#     }
+
+#     # ── ATTEMPT 1: quotes API — only during market hours on weekdays ─────────
+#     if is_weekday and is_market_hours:
+#         try:
+#             url = f"https://api.upstox.com/v2/market-quote/quotes?instrument_key={instrument_key}"
+#             response = requests.get(url, headers=headers)
+#             data = response.json()
+
+#             if data.get("status") == "success" and data.get("data"):
+#                 symb = f"{ex}:{symbol}"
+#                 entry = data["data"].get(symb)
+
+#                 if entry is None:
+#                     entry = next(iter(data["data"].values()), None)
+
+#                 if entry:
+#                     ltp = float(entry.get("last_price", 0))
+#                     ohlc_close = float(entry.get("ohlc", {}).get("close", 0))
+#                     prev_close = ohlc_close if ohlc_close > 0 else ltp
+
+#                     if ltp > 0:
+#                         print(
+#                             f"[LTP] {symbol} via quotes: {ltp}, prev_close: {prev_close}"
+#                         )
+#                         return ltp, prev_close
+
+#         except Exception as e:
+#             print(f"[WARN] quotes endpoint failed for {symbol}: {e}")
+
+#     # ── ATTEMPT 2: historical candle — runs on weekends, holidays, after hours ─
+#     # Find last trading day (walk back up to 7 days to skip weekends + holidays)
+#     try:
+#         chart_date = today
+
+#         # If today is Saturday → go to Friday
+#         # If today is Sunday  → go to Friday
+#         # If today is weekday but before market open → go to previous trading day
+#         if today.weekday() == 5:  # Saturday
+#             chart_date = today - timedelta(days=1)
+#         elif today.weekday() == 6:  # Sunday
+#             chart_date = today - timedelta(days=2)
+#         elif not is_market_hours:
+#             # Weekday but outside market hours
+#             if current_time < market_open:
+#                 chart_date = today - timedelta(days=1)
+#             # After market close → use today (today's candles exist)
+
+#         # Walk back further if chart_date lands on a weekend or holiday
+#         for _ in range(7):
+#             date_str = chart_date.strftime("%Y-%m-%d")
+#             hist_url = (
+#                 f"https://api.upstox.com/v2/historical-candle/{instrument_key}/day/{date_str}/{date_str}"  # ← "day" instead of "1minute"
+#             )
+#             hist_response = requests.get(hist_url, headers=headers)
+#             hist_data = hist_response.json()
+#             candles = hist_data.get("data", {}).get("candles", [])
+
+#             if candles:
+#                 # Candles are newest-first → candles[0] is the last candle of the day
+#                 last_close = float(candles[0][4])
+#                 print(
+#                     f"[LTP] {symbol} via historical ({date_str}): last_close={last_close}"
+#                 )
+#                 return last_close, last_close
+
+#             # No candles = holiday or no data, go one day further back
+#             chart_date -= timedelta(days=1)
+#             if chart_date.weekday() == 5:  # landed on Saturday
+#                 chart_date -= timedelta(days=1)
+#             elif chart_date.weekday() == 6:  # landed on Sunday
+#                 chart_date -= timedelta(days=2)
+
+#     except Exception as e:
+#         print(f"[WARN] historical fallback failed for {symbol}: {e}")
+
+#     print(f"[ERROR] All attempts exhausted for {symbol}")
+#     return None, None
+
+# def manualLTP1(symbol):
+#     from datetime import datetime, timedelta, time
+
+#     IST = pytz.timezone("Asia/Kolkata")
+#     now_ist = datetime.now(IST)
+#     today = now_ist.date()
+#     current_time = now_ist.time()
+
+#     market_open = time(9, 15)
+#     market_close = time(15, 30)
+#     is_weekday = today.weekday() < 5
+#     is_market_hours = market_open <= current_time <= market_close
+
+#     token  = df2[df2["tradingsymbol"] == symbol]["instrument_key"]
+#     token2 = df2[df2["name"] == symbol]["instrument_key"]
+#     ex1    = df2[df2["tradingsymbol"] == symbol]["exchange"]
+#     ex2    = df2[df2["name"] == symbol]["exchange"]
+
+#     instrument_key = None
+#     ex = None
+
+#     if not token.empty:
+#         instrument_key = token.values[0]
+#         ex = ex1.values[0]
+#     elif not token2.empty:
+#         instrument_key = token2.values[0]
+#         ex = ex2.values[0]
+
+#     if instrument_key is None or ex is None:
+#         print(f"[ERROR] Instrument not found in master for symbol: {symbol}")
+#         return None, None
+
+#     headers = {
+#         "Accept": "application/json",
+#         "Authorization": "Bearer " + access_token,
+#     }
+
+#     # ── ATTEMPT 1: quotes API — only during market hours on weekdays ─────────
+#     if is_weekday and is_market_hours:
+#         try:
+#             url = f"https://api.upstox.com/v2/market-quote/quotes?instrument_key={instrument_key}"
+#             response = requests.get(url, headers=headers)
+#             data = response.json()
+
+#             if data.get("status") == "success" and data.get("data"):
+#                 symb = f"{ex}:{symbol}"
+#                 entry = data["data"].get(symb)
+#                 if entry is None:
+#                     entry = next(iter(data["data"].values()), None)
+
+#                 if entry:
+#                     ltp = float(entry.get("last_price", 0))
+#                     ohlc_close = float(entry.get("ohlc", {}).get("close", 0))
+#                     prev_close = ohlc_close if ohlc_close > 0 else ltp
+#                     if ltp > 0:
+#                         print(f"[LTP] {symbol} via quotes: {ltp}, prev_close: {prev_close}")
+#                         return ltp, prev_close
+#         except Exception as e:
+#             print(f"[WARN] quotes endpoint failed for {symbol}: {e}")
+
+#     # ── ATTEMPT 2: daily candle (official close price) ───────────────────────
+
+#     def last_trading_day(from_date):
+#         """Return the most recent weekday on or before from_date."""
+#         d = from_date
+#         while d.weekday() >= 5:   # 5=Sat, 6=Sun
+#             d -= timedelta(days=1)
+#         return d
+
+#     try:
+#         # Decide starting date cleanly — NO weekend skip here, last_trading_day handles it
+#         if is_weekday and is_market_hours:
+#             # Market open right now but quotes failed → use today
+#             chart_date = today
+#         elif is_weekday and current_time > market_close:
+#             # After market close on a weekday → today's session is complete
+#             chart_date = today
+#         else:
+#             # Weekend, before market open, or quotes failed outside hours
+#             # → go to previous calendar day, then find last weekday
+#             chart_date = last_trading_day(today - timedelta(days=1))
+
+#         # Walk back up to 5 days to skip holidays (only moves back on empty response)
+#         for _ in range(5):
+#             date_str = chart_date.strftime("%Y-%m-%d")
+#             hist_url = (
+#                 f"https://api.upstox.com/v2/historical-candle/{instrument_key}/day/{date_str}/{date_str}"
+#             )
+#             hist_response = requests.get(hist_url, headers=headers)
+#             hist_data = hist_response.json()
+#             candles = hist_data.get("data", {}).get("candles", [])
+
+#             if candles:
+#                 last_close = float(candles[0][4])
+#                 print(f"[LTP] {symbol} via daily candle ({date_str}): {last_close}")
+#                 return last_close, last_close
+
+#             # Empty = holiday → go to previous trading day
+#             chart_date = last_trading_day(chart_date - timedelta(days=1))
+
+#     except Exception as e:
+#         print(f"[WARN] historical fallback failed for {symbol}: {e}")
+
+#     print(f"[ERROR] All attempts exhausted for {symbol}")
+#     return None, None
+
+
+def manualLTP1(symbol):
+    from datetime import datetime, timedelta, time
+    import pytz
+    
+    IST = pytz.timezone("Asia/Kolkata")
+    now_ist = datetime.now(IST)
+    today = now_ist.date()
+    current_time = now_ist.time()
+
+    market_open = time(9, 15)
+    market_close = time(15, 30)
+    is_weekday = today.weekday() < 5
+    is_market_hours = market_open <= current_time <= market_close
+
     token = df2[df2["tradingsymbol"] == symbol]["instrument_key"]
     token2 = df2[df2["name"] == symbol]["instrument_key"]
     ex1 = df2[df2["tradingsymbol"] == symbol]["exchange"]
@@ -421,27 +704,69 @@ def manualLTP1(symbol):
         "Accept": "application/json",
         "Authorization": "Bearer " + access_token,
     }
+
+    # ── ATTEMPT 1: quotes API — only during market hours on weekdays ─────────
+    if is_weekday and is_market_hours:
+        try:
+            url = f"https://api.upstox.com/v2/market-quote/quotes?instrument_key={instrument_key}"
+            response = requests.get(url, headers=headers)
+            data = response.json()
+
+            if data.get("status") == "success" and data.get("data"):
+                symb = f"{ex}:{symbol}"
+                entry = data["data"].get(symb)
+                if entry is None:
+                    entry = next(iter(data["data"].values()), None)
+
+                if entry:
+                    ltp = float(entry.get("last_price", 0))
+                    ohlc_close = float(entry.get("ohlc", {}).get("close", 0))
+                    prev_close = ohlc_close if ohlc_close > 0 else ltp
+                    if ltp > 0:
+                        print(
+                            f"[LTP] {symbol} via quotes: {ltp}, prev_close: {prev_close}"
+                        )
+                        return ltp, prev_close
+        except Exception as e:
+            print(f"[WARN] quotes endpoint failed for {symbol}: {e}")
+
+    # ── ATTEMPT 2: fetch last 7 days range, take the LATEST candle ───────────
+    # Using a date range avoids the single-day empty response problem entirely.
+    # Upstox returns all trading days in the range — we just grab candles[0]
+    # which is always the most recent trading day.
     try:
-        url = f"https://api.upstox.com/v2/market-quote/quotes?instrument_key={instrument_key}"
-        response = requests.get(url, headers=headers)
-        data = response.json()
+        end_date = today
+        # If weekend, end_date is last Friday
+        if today.weekday() == 5:  # Saturday
+            end_date = today - timedelta(days=1)
+        elif today.weekday() == 6:  # Sunday
+            end_date = today - timedelta(days=2)
 
-        if data.get("status") == "success" and data.get("data"):
-            symb = f"{ex}:{symbol}"
-            entry = data["data"].get(symb)
+        start_date = end_date - timedelta(days=7)  # ask for a week's worth
 
-            # Fallback: grab first item if key format differs slightly
-            if entry is None:
-                entry = next(iter(data["data"].values()), None)
+        end_str = end_date.strftime("%Y-%m-%d")
+        start_str = start_date.strftime("%Y-%m-%d")
 
-            if entry and float(entry.get("last_price", 0)) > 0:
-                ltp = float(entry["last_price"])
-                prev_close = float(entry.get("ohlc", {}).get("close", ltp))
-                print(f"[LTP] {symbol} via quotes: {ltp}, prev_close: {prev_close}")
-                return ltp, prev_close
+        hist_url = (
+            f"https://api.upstox.com/v2/historical-candle/"
+            f"{instrument_key}/day/{end_str}/{start_str}"
+        )
+        hist_response = requests.get(hist_url, headers=headers)
+        hist_data = hist_response.json()
+        candles = hist_data.get("data", {}).get("candles", [])
+
+        if candles:
+            # candles[0] is always the most recent trading day in the range
+            last_close = float(candles[0][4])
+            candle_date = candles[0][0][:10]  # extract YYYY-MM-DD from timestamp
+            print(f"[LTP] {symbol} via daily candle ({candle_date}): {last_close}")
+            return last_close, last_close
 
     except Exception as e:
-        print(f"[WARN] quotes endpoint failed for {symbol}: {e}")
+        print(f"[WARN] historical fallback failed for {symbol}: {e}")
+
+    print(f"[ERROR] All attempts exhausted for {symbol}")
+    return None, None
 
 
 # def manualLTP(symbol):
@@ -502,7 +827,7 @@ def placeOrder(
     # instrument_key = df2[df2['tradingsymbol'] == inst]['instrument_key'].values[0]
 
     # papertrading = 1 #if this is 1, then real trades will be placed
-    dt = datetime.datetime.now()
+    dt = datetime.now()
 
     if order_type == "MARKET":
         price = 0

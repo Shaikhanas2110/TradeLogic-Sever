@@ -16,7 +16,7 @@ app = FastAPI(title="TradingView Strategy Engine")
 # Enable CORS for Flutter
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with your Flutter app's URL
+    allow_origins=["*"],  # or specify your frontend URL, e.g. ["http://localhost:3000"]
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

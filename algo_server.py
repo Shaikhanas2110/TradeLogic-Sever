@@ -21,6 +21,7 @@ import time as time_module
 import math
 import upstox_login
 
+
 IST = pytz.timezone("Asia/Kolkata")
 
 minute_data = {}
@@ -791,7 +792,7 @@ def price(symbol):
 
 @app.route("/ltp/<instrument_key>")
 def ltp(instrument_key):
-    price = get_ltp(instrument_key)
+    price = get_ltp_price(instrument_key)
     return jsonify({"price": price})
 
 
@@ -1036,5 +1037,5 @@ def callback():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=4000, debug=False)
+    app.run(host="0.0.0.0", port=4000, debug=True)
     
