@@ -57,7 +57,7 @@
 # if __name__ == "__main__":
 #     main()
 
-# upstox_service.py
+
 from __future__ import print_function
 import urllib.parse
 import requests
@@ -74,7 +74,7 @@ GRANT_TYPE = "authorization_code"
 TOKEN_FILE = "upstox_access_token.txt"
 
 app = Flask(__name__)
-CORS(app)  # allow Flutter dev server / emulator to call
+CORS(app) 
 
 
 def auth_url() -> str:
