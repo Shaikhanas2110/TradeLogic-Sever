@@ -5,7 +5,7 @@ import time
 from flask_cors import CORS
 import upstox_client
 from Strategy_option_websocket_n7 import get_ltp, get_ltp_price
-import lux_osc_matrix
+# import lux_osc_matrix
 from helper_upstox import placeOrder
 import pandas as pd
 import numpy as np
