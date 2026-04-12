@@ -26,7 +26,7 @@ def backtest_rsi_trend_confluence(
 
     interval_map = {
         "1h": "1h",
-        "4h": "1h",  # download 1h and resample
+        "4h": "1h",  
         "1d": "1d",
     }
 
