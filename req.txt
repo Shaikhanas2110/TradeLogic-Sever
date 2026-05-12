@@ -8,3 +8,4 @@ pandas
 numpy
 flask
 gunicorn
+pandas_ta
