@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+tradingview-ta
+yfinance
+pydantic
+pyngrok
+pandas
+numpy
+flask
+gunicorn
