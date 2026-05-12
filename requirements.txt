@@ -6,3 +6,10 @@ pandas
 numpy
 requests
 pytz
+fastapi
+uvicorn
+tradingview-ta
+yfinance
+pydantic
+pyngrok
+gunicorn
