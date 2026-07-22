@@ -67,7 +67,7 @@ def backtest_rsi_trend_confluence(
         df.rename(columns={df.columns[0]: "datetime"}, inplace=True)
 
     # =============================
-    # INDICATORS
+    
     # =============================
 
     df.ta.rsi(close="close", length=rsi_length, append=True)
